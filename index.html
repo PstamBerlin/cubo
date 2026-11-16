@@ -196,7 +196,12 @@
   .sw[data-c="W"]{background:var(--w);} .sw[data-c="R"]{background:var(--r);} .sw[data-c="G"]{background:var(--g);}
   .sw[data-c="Y"]{background:var(--y);} .sw[data-c="O"]{background:var(--o);} .sw[data-c="B"]{background:var(--b);}
   .sw[data-c="X"], .sw[data-pc="X"]{background:repeating-linear-gradient(45deg,#2c2e3a 0 7px,#3a3d4c 7px 14px)!important;}
-  .sw.sel{transform:scale(1.04); box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--stroke), 0 6px 16px rgba(0,0,0,.4);}
+  .sw.sel{transform:scale(1.04); box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 6px 16px rgba(0,0,0,.4);}
+  /* the ring round the chosen colour is its own piece: it is pulled from swatch to swatch and stretches on the way */
+  .swatches{position:relative;}
+  .swring{position:absolute; z-index:2; left:0; top:0; width:0; height:0; border-radius:15px; pointer-events:none; opacity:0;
+    box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--stroke), 0 0 18px -2px color-mix(in srgb, var(--stroke) 55%, transparent); transition:opacity var(--speed) var(--ease);}
+  .swring.on{opacity:1;}
   .sw.sel::after{content:""; position:absolute; left:50%; top:50%; width:9px; height:9px; margin:-4.5px 0 0 -4.5px; border-radius:50%;
     background:var(--accent-ink); box-shadow:0 0 0 2px rgba(255,255,255,.85); animation:icopop var(--t) var(--pop);}
   .swhint{font-size:12px; color:var(--ink-dim); margin-top:10px; line-height:1.45;}
@@ -1806,6 +1811,41 @@
     }
     tabNow=key;
   }
+  // a ring (or pill) is pulled from one place to the next: its front edge runs ahead, the back edge lets go and
+  // catches up on a spring, and it gets thinner while it is long (the same pull as Picture Machines and Spin)
+  function pullFrames(from,to){
+    const spring=u=>{ if(u<=0) return 0; if(u>=1) return 1; const z=.5, wd=Math.sqrt(1-z*z), w=-Math.log(.004*wd)/z; return 1-Math.exp(-z*w*u)*(Math.cos(wd*w*u)+(z/wd)*Math.sin(wd*w*u)); };
+    const frames=[], NF=30, fx=to.x+to.w/2>=from.x+from.w/2, fy=to.y+to.h/2>=from.y+from.h/2;
+    const dx=Math.abs(to.x-from.x), dy=Math.abs(to.y-from.y), far=Math.hypot(dx,dy)||1;
+    for(let i=0;i<=NF;i++){ const t=i/NF, lead=1-Math.pow(1-Math.min(1,t/.44),3), trail=spring((t-.16)/.84);
+      let x0=from.x+(to.x-from.x)*(fx?trail:lead), x1=from.x+from.w+(to.x+to.w-from.x-from.w)*(fx?lead:trail);
+      let y0=from.y+(to.y-from.y)*(fy?trail:lead), y1=from.y+from.h+(to.y+to.h-from.y-from.h)*(fy?lead:trail);
+      const longX=Math.max(0,(x1-x0)-(from.w+(to.w-from.w)*t)), longY=Math.max(0,(y1-y0)-(from.h+(to.h-from.h)*t));
+      if(dy<2&&dx>2){ const k=.3*Math.min(1,longX/far)*(y1-y0)/2; y0+=k; y1-=k; }
+      if(dx<2&&dy>2){ const k=.3*Math.min(1,longY/far)*(x1-x0)/2; x0+=k; x1-=k; }
+      frames.push({left:x0.toFixed(2)+'px', top:y0.toFixed(2)+'px', width:Math.max(4,x1-x0).toFixed(2)+'px', height:Math.max(4,y1-y0).toFixed(2)+'px'}); }
+    frames[NF]={left:to.x+'px', top:to.y+'px', width:to.w+'px', height:to.h+'px'};
+    return {frames, opts:{duration:Math.min(760,460+far*.45), easing:'linear'}};
+  }
+  // the colour swatches (cube and pyramid): the ring follows whichever swatch is chosen
+  document.querySelectorAll('.swatches').forEach(box=>{
+    const ring=document.createElement('span'); ring.className='swring'; box.appendChild(ring);
+    let at=null, run=null;
+    const place=glide=>{
+      const sel=box.querySelector('.sw.sel');
+      if(!sel || !box.offsetWidth){ ring.classList.remove('on'); at=null; return; }
+      const to={x:sel.offsetLeft-1, y:sel.offsetTop-1, w:sel.offsetWidth+2, h:sel.offsetHeight+2};
+      Object.assign(ring.style,{left:to.x+'px', top:to.y+'px', width:to.w+'px', height:to.h+'px'}); ring.classList.add('on');
+      if(run){ run.cancel(); run=null; }
+      if(glide && at && ring.animate && (at.x!==to.x || at.y!==to.y) && !matchMedia('(prefers-reduced-motion: reduce)').matches){
+        const f=pullFrames(at,to); run=ring.animate(f.frames,f.opts); run.onfinish=()=>{ run=null; }; }
+      at=to;
+    };
+    // only the swatches' own class changes count (the ring's own class would wake the observer forever)
+    new MutationObserver(list=>{ if(list.some(m=>m.target!==ring)) place(true); }).observe(box,{subtree:true, attributes:true, attributeFilter:['class']});
+    if(window.ResizeObserver) new ResizeObserver(()=>place(false)).observe(box);
+    place(false);
+  });
   function syncTabs(glide){ placeTabPill(MODE==='pyra'?'P':String(N), glide); }
   $('ptabs').querySelectorAll('button').forEach(b=> b.onclick=()=>{ if(busy || b.dataset.p===tabNow) return; $(PICK[b.dataset.p]).click(); });
   Object.values(PICK).forEach(id=>{ const el=$(id), go=el.onclick; el.onclick=e=>{ go(e); requestAnimationFrame(()=>syncTabs(true)); }; });
